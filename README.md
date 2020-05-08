@@ -7,11 +7,11 @@ conda 4.7.12
 
 + 文件架构  
 >
-> - checkpoint --> 训练过程中保存权重与偏置的文件夹  
-> - Networks_Visualization --> 用于保存可视化网络的文件夹，不同网络在TensorBoard中可视化，便于搭建新网络时测试正确性  
+>- checkpoint --> 训练过程中保存权重与偏置的文件夹  
+>- Networks_Visualization --> 用于保存可视化网络的文件夹，不同网络在TensorBoard中可视化，便于搭建新网络时测试正确性  
 >- text --> 用于存放训练过程中的loss  
 >- Train --> 用于存放训练集与测试集的文件夹，主要由data_reload.py操作  
->-data_reload.py --> 训练集与测试集加载文件  用于读取图片与对应标签生成可被训练的列表  
+>- data_reload.py --> 训练集与测试集加载文件  用于读取图片与对应标签生成可被训练的列表  
 >- train.py --> 训练  
 >- get_learning_curve.py --> (有待开发及更新）   
 >- Inference.py --> (有待开发及更新）  
