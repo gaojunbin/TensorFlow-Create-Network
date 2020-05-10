@@ -1,128 +1,86 @@
-# -*- coding: utf-8 -*-
-"""
-Created on 2019.12.3
-@author: junbin
-训练
-"""
 import tensorflow as tf
-from data_reload import *
 from Network import *
-from Vgg_16 import *
-import math
+from Data_reload import *
 
-LEARNING_RATE_BASE = 0.0001  # 最初学习率
-LEARNING_RATE_DECAY = 0.99  # 学习率的衰减率
-LEARNING_RATE_STEP = 1000  # 喂入多少轮BATCH-SIZE以后，更新一次学习率。一般为总样本数量/BATCH_SIZE
-batch_size = 128
-STEPS = 5000000
-
+class Train:
+    def __init__(self):
+        self.net=VGG16()
+        self.forward=self.net.vgg16     #选择需要的网络
+        self.datasets = None
+        self.label = None
+        self.test_data = None
+        self.test_label = None
+        self.ckpt_dir = './checkpoint'
+        self.input_data = tf.compat.v1.placeholder(tf.float32, [None,224,224,3], name = "input_data")#定义输入
+        self.supervised_label = tf.compat.v1.placeholder(tf.float32, [None, 2], name = "label")#定义标签
+        self.BATCH_SIZE=5
+        self.STEPS = 10000000           #最大步数
+        self.LEARNING_RATE_BASE = 0.00001  # 最初学习率
+        self.LEARNING_RATE_DECAY = 0.99  # 学习率的衰减率
+        self.LEARNING_RATE_STEP = 1000  # 喂入多少轮BATCH-SIZE以后，更新一次学习率。一般为总样本数量/mini_batch
+        self.global_step =tf.compat.v1.train.get_or_create_global_step() #步数
+        self.learning_rate = tf.compat.v1.train.exponential_decay(self.LEARNING_RATE_BASE, self.global_step, self.LEARNING_RATE_STEP, self.LEARNING_RATE_DECAY, staircase=True)#学习率衰减
+        self.is_training = tf.compat.v1.placeholder(tf.bool, name="is_training")
+    def save_variable_list(self):
+        '''保存多余变量'''
+        var_list = tf.compat.v1.trainable_variables()
+        if self.global_step is not None:
+            var_list.append(self.global_step)
+        g_list = tf.compat.v1.global_variables()
+        bn_moving_vars = [g for g in g_list if 'moving_mean' in g.name]
+        bn_moving_vars += [g for g in g_list if 'moving_variance' in g.name]
+        var_list += bn_moving_vars
+        return var_list
+    def backward(self):
+        y = self.forward(self.input_data,self.is_training)
+        with tf.name_scope('loss'):
+            cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.supervised_label, logits=y))#二次代价函数:预测值与真实值的误差
+            tf.summary.scalar('loss', cross_entropy) #生成loss标量图
+        with tf.name_scope('Accuracy'):
+            correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(self.supervised_label, 1))  #结果存放在一个布尔型列表中tf.argmax(prediction,1)返回的是对于任一输入x预测到的标签值，tf.argmax(y_,1)代表正确的标签值
+            accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))#求准确率
+        with tf.name_scope('train'):
+            train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(cross_entropy)#梯度下降法:数据太庞大,选用AdamOptimizer优化器
+        merged = tf.summary.merge_all()
+        with tf.Session() as sess:
+            with tf.name_scope('init'):
+                init_op = tf.global_variables_initializer()
+            sess.run(init_op)
+            var_list = self.save_variable_list()
+            saver = tf.compat.v1.train.Saver(var_list=var_list, max_to_keep=5)
+            #读取是否需要加载之前的模型文件
+            if tf.train.latest_checkpoint(self.ckpt_dir) is not None:
+                saver.restore(sess, tf.train.latest_checkpoint(self.ckpt_dir))
+            writer = tf.summary.FileWriter("./logs", sess.graph)
+            # 训练模型。
+            for i in range(self.STEPS):
+                start = (i * self.BATCH_SIZE) % int(len(self.datasets)/self.BATCH_SIZE)*self.BATCH_SIZE
+                end = start + self.BATCH_SIZE
+                train_data = self.datasets[start:end]
+                train_label = self.label[start:end]
+                print("start:",start,"end:",end,"batchsize:",self.BATCH_SIZE,"datasetslen:",len(self.datasets))
+                sess.run(train_step, feed_dict={self.input_data: train_data, self.supervised_label: train_label,self.is_training:True})
+                #writer.add_summary(summary_str, i)
+                if i % 100 == 0:
+                    train_loss = sess.run(cross_entropy, feed_dict={self.input_data: train_data, self.supervised_label: train_label,self.is_training:False})
+                    loss = sess.run(cross_entropy, feed_dict={self.input_data: self.test_data, self.supervised_label: self.test_label,self.is_training:False})
+                    train_accuracy = accuracy.eval(feed_dict={self.input_data: train_data, self.supervised_label: train_label,self.is_training:False})
+                    test_accuracy = accuracy.eval(feed_dict={self.input_data: self.test_data, self.supervised_label: self.test_label,self.is_training:False})
+                    print("After %d step(s), train accuracy is %g, val accuracy is %g, train loss is %g, val loss is %g" % (i, train_accuracy,test_accuracy ,train_loss , loss))
+                if test_accuracy>0.8 or i>4000:
+                    saver.save(sess, './checkpoint/variable', global_step=i)
+                    print("精度已达要求或训练次数已达上限，参数已保存，训练终止")
+                    break
 def mkdir(name):
+    '''创建文件夹'''
     isExists=os.path.exists(name)
     if not isExists:
         os.makedirs(name)
     return 0
 
-def average_gradients(tower_grads):
-    average_grads = []
-    for grad_and_vars in zip(*tower_grads):
-        grads = []
-        for g, _ in grad_and_vars:
-            expend_g = tf.expand_dims(g, axis=0)
-            grads.append(expend_g)
-        grad = tf.concat(grads, 0)
-        grad = tf.reduce_mean(grad, 0)
-        v = grad_and_vars[0][1]
-        grad_and_var = (grad, v)
-        average_grads.append(grad_and_var)
-    return average_grads
-
-def compute(test_data,test_label, accuracy, sess, X, Y):
-    test_accuracy = 0
-    num = len(test_data)
-    for j in range(0, math.ceil(num / 500)):
-        if (j != math.ceil(num / 500) - 1):
-            test_accuracy = test_accuracy + accuracy.eval(session=sess,feed_dict={X: test_data[500 * j:500 * j + 500],Y: test_label[500 * j:500 * j + 500]}) * 500
-        else:
-            test_accuracy = test_accuracy + accuracy.eval(session=sess,feed_dict={X: test_data[500 * j:num],Y: test_label[500 * j:num]}) * (num - 500 * j)
-    test_accuracy = test_accuracy / num
-    return test_accuracy
-
-
-def train():
-    datasets, label, val_data, val_label = read_train_data()
-    
-        global_step =tf.train.get_or_create_global_step()
-        tower_grads = []
-        with tf.name_scope('Input_data'):
-            X = tf.placeholder(tf.float32, [None, 224, 224, 3], name="Input")
-            Y = tf.placeholder(tf.float32, [None, 60], name='Estimation')        
-        learning_rate = tf.train.exponential_decay(LEARNING_RATE_BASE, global_step, LEARNING_RATE_STEP,LEARNING_RATE_DECAY, staircase=True)
-        opt = tf.train.AdamOptimizer(learning_rate)
-        with tf.variable_scope(tf.get_variable_scope(),reuse=tf.AUTO_REUSE):
-            for i in range(GPU_num):
-                with tf.device("/gpu:%d" % i):
-                    with tf.name_scope("tower_%d" % i):
-                            _x = X[i * batch_size:(i + 1) * batch_size]
-                            _y = Y[i * batch_size:(i + 1) * batch_size]
-                            logits = ResNet_v2(_x, training=True) 
-                            loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=_y, logits=logits))
-                            grads = opt.compute_gradients(loss)
-                            tower_grads.append(grads)
-                            if i == 0:
-                                logits_test = ResNet_v2(_x, training=False)
-                                correct_prediction = tf.equal(tf.argmax(logits_test, 1), tf.argmax(_y, 1))
-                                accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-
-        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-        with tf.control_dependencies(update_ops): #保证train_op在update_ops执行之后再执行
-            grads = average_gradients(tower_grads)
-            train_op = opt.apply_gradients(grads, global_step=global_step)
-        merged = tf.summary.merge_all()
-        tf_config = tf.ConfigProto()
-        tf_config.gpu_options.per_process_gpu_memory_fraction = 0.9
-        tf_config.gpu_options.allow_growth = True # 自适应显存
-        with tf.Session(config=tf_config) as sess:
-            with tf.name_scope('init'):
-                init_op = tf.global_variables_initializer()
-            sess.run(init_op)
-            var_list = tf.trainable_variables()
-            if global_step is not None:
-                var_list.append(global_step)
-            g_list = tf.global_variables()
-            bn_moving_vars = [g for g in g_list if 'moving_mean' in g.name]
-            bn_moving_vars += [g for g in g_list if 'moving_variance' in g.name]
-            var_list += bn_moving_vars
-            saver = tf.train.Saver(var_list=var_list, max_to_keep=5)
-            writer = tf.summary.FileWriter("./logs", sess.graph)
-            # 训练模型。
-            if tf.train.latest_checkpoint('checkpoint') is not None:
-                saver.restore(sess, tf.train.latest_checkpoint('checkpoint'))
-            data_len = len(datasets)
-            for i in range(STEPS):
-                start = (i*batch_size*GPU_num) % int(data_len/(batch_size*GPU_num))*batch_size*GPU_num
-                end = start + batch_size*GPU_num
-                train_data = datasets[start:end]
-                train_label = label[start:end]
-                sess.run(train_op, feed_dict={X: train_data, Y: train_label})
-                if i % 100 == 0:
-                    train_loss, train_acc = sess.run([loss, accuracy], feed_dict={X: train_data, Y: train_label})
-                    val_loss, val_acc = sess.run([loss, accuracy], feed_dict={X: val_data, Y: val_label})
-                    f = open('./loss.txt', 'a')
-                    f.write("%d %g %g %g %g\n" % (i,train_acc,val_acc,train_loss,val_loss))
-                    f.close()
-                    print("After %g step(s), train accuracy is %g, val accuracy is %g, train loss is %g, val loss is %g" % (i, train_acc,val_acc,train_loss,val_loss))
-                if i%1000==0:
-                    saver.save(sess, './checkpoint/variable.ckpt', global_step=i)
-
-def main():
-    mkdir('./checkpoint')
-    train()
-    # with tf.name_scope('Input_data'):
-    #     X = tf.placeholder(tf.float32, [None, 149, 149, 3], name="Input")
-    # logits = ResNet_v2(X, False)
-    # merged = tf.summary.merge_all()
-    # sess= tf.Session()
-    # writer = tf.summary.FileWriter("./logs", sess.graph)
-
 if __name__ == '__main__':
-    main()
+    mkdir('./checkpoint')
+    dt = Datasets()
+    main = Train()
+    main.datasets, main.label, main.test_data, main.test_label = dt.read_train_data()
+    main.backward()

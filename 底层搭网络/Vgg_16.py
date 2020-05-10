@@ -168,11 +168,9 @@ def backward(datasets, label, test_data, test_label):
                 f = open('./text/loss.txt', 'a')
                 f.write("训练步数：%d,loss(train data):%g,loss(test data):%g**accuracy(train data):%g,accuracy(test data):%g\n" %(i,train_loss,val_loss,train_accuracy,test_accuracy))
                 print("训练步数：%d,loss(train data):%g,loss(test data):%g**accuracy(train data):%g,accuracy(test data):%g\n" %(i,train_loss,val_loss,train_accuracy,test_accuracy))
-                # f.write("After %d training step(s), loss_mse on train data is %g, loss_mse on val data is %g, min_loss is %g\n" % (i, train_loss, val_loss, min_loss))
-                # print("After %d training step(s), loss_mse on train data is %g, loss_mse on val data is %g, min_loss is %g" % (i, train_loss, val_loss, min_loss))
                 f.close()
-            # if i % 100 == 0:
-            #     saver.save(sess, './checkpoint/variable', global_step = i)
+            if i % 100 == 0:
+                saver.save(sess, './checkpoint/variable', global_step = i)
  
 def main():
     # datasets, label, test_data, test_label = reload_all_data()
